@@ -1,0 +1,198 @@
+.App {
+  min-height: 100vh;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+}
+
+.App-header {
+  text-align: center;
+  padding: 2rem;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.App-main {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 2rem;
+}
+
+.call-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3rem;
+  margin-top: 2rem;
+}
+
+.btn-create, .btn-join, .btn-end {
+  padding: 1rem 2rem;
+  font-size: 1.2rem;
+  border: none;
+  border-radius: 50px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  font-weight: bold;
+}
+
+.btn-create {
+  background: #4CAF50;
+  color: white;
+  padding: 1.5rem 3rem;
+  font-size: 1.5rem;
+}
+
+.btn-create:hover {
+  background: #45a049;
+  transform: translateY(-2px);
+  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+}
+
+.btn-join {
+  background: #2196F3;
+  color: white;
+  margin-left: 1rem;
+}
+
+.btn-join:hover {
+  background: #0b7dda;
+}
+
+.btn-end {
+  background: #f44336;
+  color: white;
+  margin-top: 2rem;
+}
+
+.btn-end:hover {
+  background: #da190b;
+}
+
+.join-section {
+  background: rgba(255, 255, 255, 0.1);
+  padding: 2rem;
+  border-radius: 20px;
+  width: 100%;
+  max-width: 500px;
+}
+
+.join-section input {
+  padding: 1rem;
+  font-size: 1.2rem;
+  border: none;
+  border-radius: 10px;
+  width: 200px;
+  text-align: center;
+  letter-spacing: 3px;
+  font-weight: bold;
+}
+
+.waiting-room {
+  text-align: center;
+  background: rgba(255, 255, 255, 0.1);
+  padding: 3rem;
+  border-radius: 20px;
+  margin-top: 2rem;
+}
+
+.call-code-display {
+  background: rgba(0, 0, 0, 0.3);
+  padding: 2rem;
+  border-radius: 15px;
+  margin: 2rem 0;
+}
+
+.call-code-display h1 {
+  font-size: 4rem;
+  letter-spacing: 10px;
+  margin: 1rem 0;
+  color: #4CAF50;
+  text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+}
+
+.video-container {
+  background: rgba(255, 255, 255, 0.1);
+  padding: 2rem;
+  border-radius: 20px;
+}
+
+.video-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+  gap: 2rem;
+  margin-bottom: 2rem;
+}
+
+.video-wrapper {
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 15px;
+  padding: 1rem;
+  position: relative;
+}
+
+.video-element {
+  width: 100%;
+  height: 400px;
+  background: black;
+  border-radius: 10px;
+  object-fit: cover;
+}
+
+.waiting-video {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+}
+
+.call-info {
+  display: flex;
+  justify-content: center;
+  gap: 3rem;
+  margin: 1rem 0;
+  font-size: 1.2rem;
+}
+
+.error-message {
+  background: rgba(244, 67, 54, 0.2);
+  border: 2px solid #f44336;
+  color: #ffcdd2;
+  padding: 1rem;
+  border-radius: 10px;
+  margin-bottom: 1rem;
+  text-align: center;
+}
+
+.loading {
+  text-align: center;
+  padding: 4rem;
+  font-size: 1.5rem;
+}
+
+.App-footer {
+  text-align: center;
+  padding: 2rem;
+  margin-top: 3rem;
+  background: rgba(0, 0, 0, 0.2);
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+@media (max-width: 768px) {
+  .video-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .video-element {
+    height: 300px;
+  }
+  
+  .call-code-display h1 {
+    font-size: 3rem;
+  }
+  
+  .call-info {
+    flex-direction: column;
+    gap: 1rem;
+    text-align: center;
+  }
+}
