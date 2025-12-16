@@ -450,4 +450,8 @@
     text-align: center;
   }
   
-  .preview-video, .waiting-video
+  .preview-video, .waiting-video {
+    width: 280px;
+    height: 210px;
+  }
+}
