@@ -4,36 +4,32 @@ import io from 'socket.io-client';
 
 const SOCKET_SERVER_URL = process.env.REACT_APP_SOCKET_URL || 'http://localhost:5000';
 
-function App() {
+function VideoCallApp() {
   // États
-  const [socket, setSocket] = useState(null);
-  const [callCode, setCallCode] = useState('');
-  const [inputCallCode, setInputCallCode] = useState('');
-  const [callStatus, setCallStatus] = useState('idle'); // idle, waiting, in-call
-  const [error, setError] = useState('');
-  const [isCreator, setIsCreator] = useState(false);
-  const [showWaitingModal, setShowWaitingModal] = useState(false);
-  const [waitingParticipantId, setWaitingParticipantId] = useState(null);
-  const [connectionStatus, setConnectionStatus] = useState('disconnected');
-  
+  const [appState, setAppState] = useState({
+    status: 'idle', // idle, creating, waiting, joining, in-call, error
+    callCode: '',
+    inputCode: '',
+    error: '',
+    isCreator: false,
+    participants: 0,
+    connectionStatus: 'disconnected'
+  });
+
   // Références
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
-  const peerConnection = useRef(null);
-  const localStream = useRef(null);
+  const peerConnectionRef = useRef(null);
+  const localStreamRef = useRef(null);
   const socketRef = useRef(null);
-  const configuration = useRef({
+  const configurationRef = useRef({
     iceServers: [
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' },
       { urls: 'stun:stun2.l.google.com:19302' },
       { urls: 'stun:stun3.l.google.com:19302' },
-      // Ajoutez ces serveurs TURN gratuits
-      {
-        urls: 'turn:numb.viagenie.ca',
-        credential: 'muazkh',
-        username: 'webrtc@live.com'
-      },
+      { urls: 'stun:stun4.l.google.com:19302' },
+      // Serveurs TURN gratuits
       {
         urls: 'turn:openrelay.metered.ca:80',
         username: 'openrelayproject',
@@ -43,149 +39,74 @@ function App() {
         urls: 'turn:openrelay.metered.ca:443',
         username: 'openrelayproject',
         credential: 'openrelayproject'
+      },
+      {
+        urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+        username: 'openrelayproject',
+        credential: 'openrelayproject'
       }
-    ]
+    ],
+    iceCandidatePoolSize: 10,
+    bundlePolicy: 'max-bundle',
+    rtcpMuxPolicy: 'require'
   });
 
-  // Initialisation Socket.io
+  // Initialisation
   useEffect(() => {
-    console.log('Initialisation de Socket.io...');
-    const newSocket = io(SOCKET_SERVER_URL, {
-      transports: ['websocket', 'polling'],
-      reconnection: true,
-      reconnectionDelay: 1000,
-      reconnectionDelayMax: 5000,
-      reconnectionAttempts: Infinity
-    });
-
-    socketRef.current = newSocket;
-    setSocket(newSocket);
-
-    // Événements Socket.io
-    newSocket.on('connect', () => {
-      console.log('✅ Socket.io connecté:', newSocket.id);
-      setConnectionStatus('connected');
-    });
-
-    newSocket.on('disconnect', () => {
-      console.log('❌ Socket.io déconnecté');
-      setConnectionStatus('disconnected');
-    });
-
-    newSocket.on('call-created', (data) => {
-      console.log('📞 Appel créé:', data);
-      setCallCode(data.callCode);
-      setIsCreator(true);
-      setCallStatus('waiting');
-      setError('');
-      initLocalStream();
-    });
-
-    newSocket.on('call-joined', (data) => {
-      console.log('✅ Appel rejoint:', data);
-      setCallStatus('in-call');
-      setError('');
-      initLocalStream().then(() => {
-        if (!isCreator) {
-          // Si c'est un participant, on attend l'offre du créateur
-          console.log('⏳ En attente de l\'offre du créateur...');
-        }
-      });
-    });
-
-    newSocket.on('call-not-found', () => {
-      setError('❌ Code d\'appel introuvable');
-      setCallStatus('idle');
-    });
-
-    newSocket.on('call-full', () => {
-      setError('❌ L\'appel est complet');
-      setCallStatus('idle');
-    });
-
-    newSocket.on('participant-waiting', (data) => {
-      console.log('🔔 Participant en attente:', data);
-      setWaitingParticipantId(data.participantId);
-      setShowWaitingModal(true);
-    });
-
-    newSocket.on('participant-accepted', (data) => {
-      console.log('✅ Participant accepté:', data);
-      setShowWaitingModal(false);
-      setWaitingParticipantId(null);
-      setCallStatus('in-call');
-      
-      if (isCreator) {
-        // Créateur: créer et envoyer l'offre
-        setTimeout(() => {
-          createPeerConnection();
-          createAndSendOffer();
-        }, 1000);
-      }
-    });
-
-    newSocket.on('receive-offer', async (data) => {
-      console.log('📥 Offre reçue:', data);
-      if (!isCreator) {
-        // Participant: traiter l'offre du créateur
-        await handleReceivedOffer(data.offer);
-      }
-    });
-
-    newSocket.on('receive-answer', async (data) => {
-      console.log('📥 Réponse reçue:', data);
-      if (isCreator && peerConnection.current) {
-        await handleReceivedAnswer(data.answer);
-      }
-    });
-
-    newSocket.on('receive-ice-candidate', async (data) => {
-      console.log('❄️ Candidat ICE reçu:', data);
-      if (peerConnection.current && data.candidate) {
-        try {
-          await peerConnection.current.addIceCandidate(new RTCIceCandidate(data.candidate));
-          console.log('✅ Candidat ICE ajouté');
-        } catch (err) {
-          console.error('❌ Erreur ajout ICE:', err);
-        }
-      }
-    });
-
-    newSocket.on('participant-left', () => {
-      console.log('🚪 Participant parti');
-      setCallStatus('waiting');
-      setError('Le participant a quitté l\'appel');
-      if (peerConnection.current) {
-        peerConnection.current.close();
-        peerConnection.current = null;
-      }
-      if (remoteVideoRef.current) {
-        remoteVideoRef.current.srcObject = null;
-      }
-    });
-
-    return () => {
-      cleanup();
-      newSocket.disconnect();
-    };
+    initializeApp();
+    return cleanup;
   }, []);
 
-  // Initialiser le flux local
-  const initLocalStream = async () => {
+  const initializeApp = async () => {
     try {
-      if (localStream.current) {
-        // Si déjà initialisé, réutiliser
-        if (localVideoRef.current) {
-          localVideoRef.current.srcObject = localStream.current;
-        }
-        return;
-      }
+      // Initialiser Socket.io
+      const socket = io(SOCKET_SERVER_URL, {
+        transports: ['websocket', 'polling'],
+        reconnection: true,
+        reconnectionAttempts: 10,
+        reconnectionDelay: 1000
+      });
 
-      console.log('🎥 Demande d\'accès média...');
-      const stream = await navigator.mediaDevices.getUserMedia({
+      socketRef.current = socket;
+
+      // Événements Socket.io
+      socket.on('connect', () => {
+        console.log('✅ Socket connecté:', socket.id);
+        updateState({ connectionStatus: 'connected' });
+      });
+
+      socket.on('disconnect', () => {
+        console.log('❌ Socket déconnecté');
+        updateState({ connectionStatus: 'disconnected' });
+      });
+
+      socket.on('call-created', handleCallCreated);
+      socket.on('call-joined', handleCallJoined);
+      socket.on('participant-joined', handleParticipantJoined);
+      socket.on('participant-left', handleParticipantLeft);
+      socket.on('webrtc-offer', handleWebRTCOffer);
+      socket.on('webrtc-answer', handleWebRTCAnswer);
+      socket.on('webrtc-ice-candidate', handleWebRTCIceCandidate);
+      socket.on('error', handleError);
+
+      // Initialiser la caméra
+      await initializeMedia();
+
+    } catch (error) {
+      console.error('Erreur initialisation:', error);
+      updateState({ 
+        error: 'Erreur lors de l\'initialisation',
+        status: 'error' 
+      });
+    }
+  };
+
+  const initializeMedia = async () => {
+    try {
+      const constraints = {
         video: {
-          width: { ideal: 640 },
-          height: { ideal: 480 },
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
           frameRate: { ideal: 30 }
         },
         audio: {
@@ -193,263 +114,317 @@ function App() {
           noiseSuppression: true,
           autoGainControl: true
         }
-      });
+      };
 
-      localStream.current = stream;
-      
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      localStreamRef.current = stream;
+
       if (localVideoRef.current) {
         localVideoRef.current.srcObject = stream;
-        localVideoRef.current.muted = true;
-        console.log('✅ Flux local initialisé');
       }
 
-      return stream;
-    } catch (err) {
-      console.error('❌ Erreur accès média:', err);
-      setError('Impossible d\'accéder à la caméra/microphone');
-      return null;
+      console.log('✅ Média initialisé');
+    } catch (error) {
+      console.error('❌ Erreur média:', error);
+      updateState({ 
+        error: 'Impossible d\'accéder à la caméra/microphone',
+        status: 'error' 
+      });
     }
   };
 
-  // Créer la connexion Peer
-  const createPeerConnection = () => {
-    console.log('🔗 Création PeerConnection...');
+  // Créer un appel
+  const createCall = async () => {
+    updateState({ status: 'creating', error: '' });
+    
+    if (!localStreamRef.current) {
+      await initializeMedia();
+    }
+    
+    if (socketRef.current) {
+      socketRef.current.emit('create-call');
+    }
+  };
+
+  // Rejoindre un appel
+  const joinCall = async () => {
+    const code = appState.inputCode.trim().toUpperCase();
+    
+    if (code.length !== 6) {
+      updateState({ error: 'Le code doit contenir 6 caractères' });
+      return;
+    }
+
+    updateState({ status: 'joining', error: '' });
+    
+    if (!localStreamRef.current) {
+      await initializeMedia();
+    }
+    
+    if (socketRef.current) {
+      socketRef.current.emit('join-call', { callCode: code });
+    }
+  };
+
+  // Gestionnaires d'événements
+  const handleCallCreated = (data) => {
+    console.log('📞 Appel créé:', data);
+    updateState({
+      status: 'waiting',
+      callCode: data.callCode,
+      isCreator: true,
+      participants: 1
+    });
+    
+    // Démarrer le heartbeat
+    startHeartbeat(data.callCode);
+  };
+
+  const handleCallJoined = (data) => {
+    console.log('✅ Appel rejoint:', data);
+    updateState({
+      status: 'in-call',
+      callCode: data.callCode,
+      isCreator: false,
+      participants: 2
+    });
+    
+    // Créer la connexion Peer
+    createPeerConnection(data.creatorId);
+    
+    // Démarrer le heartbeat
+    startHeartbeat(data.callCode);
+  };
+
+  const handleParticipantJoined = (data) => {
+    console.log('👤 Participant joint:', data);
+    updateState({
+      status: 'in-call',
+      participants: 2
+    });
+    
+    // Créer et envoyer l'offre
+    createPeerConnection(data.participantId);
+    setTimeout(() => sendOffer(data.participantId), 500);
+  };
+
+  const handleParticipantLeft = () => {
+    console.log('🚪 Participant parti');
+    updateState({
+      status: 'waiting',
+      participants: 1,
+      error: 'Le participant a quitté l\'appel'
+    });
+    
+    // Fermer la connexion Peer
+    if (peerConnectionRef.current) {
+      peerConnectionRef.current.close();
+      peerConnectionRef.current = null;
+    }
+  };
+
+  // WebRTC Functions
+  const createPeerConnection = (targetId) => {
+    console.log('🔗 Création PeerConnection pour:', targetId);
     
     try {
-      // Fermer l'ancienne connexion si elle existe
-      if (peerConnection.current) {
-        peerConnection.current.close();
+      // Fermer l'ancienne connexion
+      if (peerConnectionRef.current) {
+        peerConnectionRef.current.close();
       }
 
-      const pc = new RTCPeerConnection(configuration.current);
-      
-      // Ajouter le flux local
-      if (localStream.current) {
-        localStream.current.getTracks().forEach(track => {
-          pc.addTrack(track, localStream.current);
-          console.log(`➕ Ajout piste ${track.kind}`);
+      const pc = new RTCPeerConnection(configurationRef.current);
+      peerConnectionRef.current = pc;
+      peerConnectionRef.current.targetId = targetId;
+
+      // Ajouter le stream local
+      if (localStreamRef.current) {
+        localStreamRef.current.getTracks().forEach(track => {
+          pc.addTrack(track, localStreamRef.current);
         });
       }
 
       // Gérer les candidats ICE
       pc.onicecandidate = (event) => {
         if (event.candidate && socketRef.current) {
-          console.log('❄️ Envoi candidat ICE');
-          socketRef.current.emit('send-ice-candidate', {
-            callCode,
-            candidate: event.candidate
+          socketRef.current.emit('webrtc-ice-candidate', {
+            callCode: appState.callCode,
+            candidate: event.candidate,
+            to: targetId
           });
         }
       };
 
-      // Suivre l'état ICE
+      // Gérer les changements d'état
       pc.oniceconnectionstatechange = () => {
-        console.log(`🔄 État ICE: ${pc.iceConnectionState}`);
-        if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
-          console.log('✅ Connexion WebRTC établie!');
-          setError('');
-        } else if (pc.iceConnectionState === 'failed') {
-          console.error('❌ Échec connexion ICE');
-          setError('Échec de connexion. Essayez de rafraîchir.');
-        }
-      };
-
-      // Recevoir le flux distant
-      pc.ontrack = (event) => {
-        console.log('🎬 Réception flux distant:', event.streams.length, 'stream(s)');
+        console.log('🔄 ICE State:', pc.iceConnectionState);
         
-        if (event.streams && event.streams[0]) {
-          const remoteStream = event.streams[0];
-          
-          // Vérifier qu'on a bien des pistes
-          const videoTracks = remoteStream.getVideoTracks();
-          const audioTracks = remoteStream.getAudioTracks();
-          
-          console.log(`📹 Pistes vidéo: ${videoTracks.length}`);
-          console.log(`🔊 Pistes audio: ${audioTracks.length}`);
-          
-          if (remoteVideoRef.current) {
-            remoteVideoRef.current.srcObject = remoteStream;
-            remoteVideoRef.current.onloadedmetadata = () => {
-              console.log('✅ Métadonnées vidéo chargées');
-              remoteVideoRef.current.play().catch(e => console.error('❌ Erreur play:', e));
-            };
-            
-            // Forcer le play au cas où
-            setTimeout(() => {
-              if (remoteVideoRef.current) {
-                remoteVideoRef.current.play().catch(e => console.error('❌ Erreur play timeout:', e));
-              }
-            }, 1000);
-          }
+        switch(pc.iceConnectionState) {
+          case 'connected':
+          case 'completed':
+            console.log('✅ Connexion WebRTC établie!');
+            updateState({ error: '' });
+            break;
+          case 'failed':
+            console.error('❌ Échec connexion ICE');
+            updateState({ error: 'Connexion échouée. Réessayez.' });
+            break;
         }
       };
 
-      peerConnection.current = pc;
+      // Recevoir le stream distant
+      pc.ontrack = (event) => {
+        console.log('🎬 Stream distant reçu');
+        
+        if (event.streams && event.streams[0] && remoteVideoRef.current) {
+          const remoteStream = event.streams[0];
+          remoteVideoRef.current.srcObject = remoteStream;
+          
+          // Forcer la lecture
+          remoteVideoRef.current.play().catch(e => {
+            console.warn('⚠️ Erreur lecture vidéo:', e);
+          });
+        }
+      };
+
+      pc.onnegotiationneeded = async () => {
+        console.log('🔄 Négociation nécessaire');
+        await sendOffer(targetId);
+      };
+
       console.log('✅ PeerConnection créée');
       return pc;
-    } catch (err) {
-      console.error('❌ Erreur création PeerConnection:', err);
+
+    } catch (error) {
+      console.error('❌ Erreur création PeerConnection:', error);
       return null;
     }
   };
 
-  // Créer et envoyer une offre
-  const createAndSendOffer = async () => {
-    console.log('📤 Création offre...');
-    
-    const pc = peerConnection.current;
-    if (!pc) {
-      console.error('❌ Pas de PeerConnection');
-      return;
-    }
+  const sendOffer = async (targetId) => {
+    const pc = peerConnectionRef.current;
+    if (!pc) return;
 
     try {
       const offer = await pc.createOffer({
         offerToReceiveAudio: true,
         offerToReceiveVideo: true
       });
-
-      console.log('✅ Offre créée, définition locale...');
-      await pc.setLocalDescription(offer);
-
-      console.log('📤 Envoi offre via socket...');
-      socketRef.current.emit('send-offer', {
-        callCode,
-        offer: pc.localDescription
-      });
-    } catch (err) {
-      console.error('❌ Erreur création offre:', err);
-      setError('Erreur lors de l\'initiation de l\'appel');
-    }
-  };
-
-  // Traiter une offre reçue
-  const handleReceivedOffer = async (offer) => {
-    console.log('📥 Traitement offre reçue...');
-    
-    try {
-      const pc = createPeerConnection();
-      if (!pc) return;
-
-      console.log('🔧 Définition offre distante...');
-      await pc.setRemoteDescription(new RTCSessionDescription(offer));
-
-      console.log('🔧 Création réponse...');
-      const answer = await pc.createAnswer();
       
-      console.log('🔧 Définition réponse locale...');
-      await pc.setLocalDescription(answer);
-
-      console.log('📤 Envoi réponse...');
-      socketRef.current.emit('send-answer', {
-        callCode,
-        answer: pc.localDescription
+      await pc.setLocalDescription(offer);
+      
+      socketRef.current.emit('webrtc-offer', {
+        callCode: appState.callCode,
+        offer: pc.localDescription,
+        to: targetId
       });
-    } catch (err) {
-      console.error('❌ Erreur traitement offre:', err);
-      setError('Erreur lors de la connexion à l\'appel');
+      
+      console.log('📤 Offre envoyée à:', targetId);
+    } catch (error) {
+      console.error('❌ Erreur envoi offre:', error);
     }
   };
 
-  // Traiter une réponse reçue
-  const handleReceivedAnswer = async (answer) => {
-    console.log('📥 Traitement réponse reçue...');
+  const handleWebRTCOffer = async (data) => {
+    console.log('📥 Offre reçue de:', data.from);
+    
+    if (!peerConnectionRef.current) {
+      createPeerConnection(data.from);
+    }
+    
+    const pc = peerConnectionRef.current;
+    if (!pc) return;
     
     try {
-      const pc = peerConnection.current;
-      if (!pc) return;
-
-      console.log('🔧 Définition réponse distante...');
-      await pc.setRemoteDescription(new RTCSessionDescription(answer));
-      console.log('✅ Réponse distante définie');
-    } catch (err) {
-      console.error('❌ Erreur traitement réponse:', err);
-    }
-  };
-
-  // Créer un appel
-  const handleCreateCall = async () => {
-    console.log('📞 Création appel...');
-    setCallStatus('creating');
-    setError('');
-    
-    const stream = await initLocalStream();
-    if (stream) {
-      socketRef.current.emit('create-call');
-    }
-  };
-
-  // Rejoindre un appel
-  const handleJoinCall = async () => {
-    const code = inputCallCode.trim().toUpperCase();
-    if (code.length !== 6) {
-      setError('Le code doit contenir 6 caractères');
-      return;
-    }
-
-    console.log('🔗 Rejoindre appel:', code);
-    setCallStatus('joining');
-    setError('');
-    
-    const stream = await initLocalStream();
-    if (stream) {
-      socketRef.current.emit('join-call', { callCode: code });
-    }
-  };
-
-  // Accepter un participant
-  const handleAcceptParticipant = () => {
-    if (waitingParticipantId && socketRef.current) {
-      console.log('✅ Acceptation participant:', waitingParticipantId);
-      socketRef.current.emit('accept-participant', {
-        callCode,
-        participantId: waitingParticipantId
+      await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+      
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      
+      socketRef.current.emit('webrtc-answer', {
+        callCode: appState.callCode,
+        answer: pc.localDescription,
+        to: data.from
       });
-      setShowWaitingModal(false);
-      setWaitingParticipantId(null);
+      
+      console.log('📤 Réponse envoyée à:', data.from);
+    } catch (error) {
+      console.error('❌ Erreur traitement offre:', error);
     }
   };
 
-  // Refuser un participant
-  const handleRejectParticipant = () => {
-    if (waitingParticipantId && socketRef.current) {
-      console.log('❌ Refus participant:', waitingParticipantId);
-      socketRef.current.emit('reject-participant', {
-        callCode,
-        participantId: waitingParticipantId
-      });
-      setShowWaitingModal(false);
-      setWaitingParticipantId(null);
-    }
-  };
-
-  // Quitter l'appel
-  const handleEndCall = () => {
-    console.log('🚪 Fin appel');
+  const handleWebRTCAnswer = async (data) => {
+    console.log('📥 Réponse reçue de:', data.from);
     
-    if (socketRef.current && callCode) {
-      socketRef.current.emit('leave-call', { callCode });
+    const pc = peerConnectionRef.current;
+    if (!pc) return;
+    
+    try {
+      await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+      console.log('✅ Réponse traitée');
+    } catch (error) {
+      console.error('❌ Erreur traitement réponse:', error);
+    }
+  };
+
+  const handleWebRTCIceCandidate = async (data) => {
+    const pc = peerConnectionRef.current;
+    if (!pc || !data.candidate) return;
+    
+    try {
+      await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+      console.log('✅ Candidat ICE ajouté');
+    } catch (error) {
+      console.error('❌ Erreur ajout ICE:', error);
+    }
+  };
+
+  const handleError = (data) => {
+    console.error('❌ Erreur serveur:', data);
+    updateState({ 
+      error: data.message || 'Erreur de connexion',
+      status: 'error' 
+    });
+  };
+
+  // Utilitaires
+  const updateState = (updates) => {
+    setAppState(prev => ({ ...prev, ...updates }));
+  };
+
+  const startHeartbeat = (callCode) => {
+    const interval = setInterval(() => {
+      if (socketRef.current && appState.status === 'in-call') {
+        socketRef.current.emit('heartbeat', { callCode });
+      } else {
+        clearInterval(interval);
+      }
+    }, 30000); // Toutes les 30 secondes
+  };
+
+  const endCall = () => {
+    if (socketRef.current && appState.callCode) {
+      socketRef.current.emit('leave-call', { callCode: appState.callCode });
     }
     
     cleanup();
-    resetState();
+    resetApp();
   };
 
-  // Nettoyer
   const cleanup = () => {
-    console.log('🧹 Nettoyage...');
-    
-    if (peerConnection.current) {
-      peerConnection.current.close();
-      peerConnection.current = null;
+    // Fermer PeerConnection
+    if (peerConnectionRef.current) {
+      peerConnectionRef.current.close();
+      peerConnectionRef.current = null;
     }
     
-    if (localStream.current) {
-      localStream.current.getTracks().forEach(track => track.stop());
-      localStream.current = null;
+    // Arrêter les streams
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach(track => track.stop());
+      localStreamRef.current = null;
     }
     
+    // Nettoyer les vidéos
     if (localVideoRef.current) {
       localVideoRef.current.srcObject = null;
     }
@@ -459,157 +434,237 @@ function App() {
     }
   };
 
-  // Réinitialiser l'état
-  const resetState = () => {
-    setCallCode('');
-    setInputCallCode('');
-    setCallStatus('idle');
-    setError('');
-    setIsCreator(false);
-    setShowWaitingModal(false);
-    setWaitingParticipantId(null);
+  const resetApp = () => {
+    updateState({
+      status: 'idle',
+      callCode: '',
+      inputCode: '',
+      error: '',
+      isCreator: false,
+      participants: 0
+    });
   };
 
-  // Copier le code
   const copyCallCode = () => {
-    navigator.clipboard.writeText(callCode);
+    navigator.clipboard.writeText(appState.callCode);
     alert('Code copié dans le presse-papier !');
   };
 
+  const toggleCamera = () => {
+    if (localStreamRef.current) {
+      const videoTrack = localStreamRef.current.getVideoTracks()[0];
+      if (videoTrack) {
+        videoTrack.enabled = !videoTrack.enabled;
+      }
+    }
+  };
+
+  const toggleMicrophone = () => {
+    if (localStreamRef.current) {
+      const audioTrack = localStreamRef.current.getAudioTracks()[0];
+      if (audioTrack) {
+        audioTrack.enabled = !audioTrack.enabled;
+      }
+    }
+  };
+
   return (
-    <div className="App">
-      <header className="App-header">
-        <h1>🎥 Appel Vidéo</h1>
-        <p>Connexion simple avec code secret</p>
-        <div className="connection-status">
-          {connectionStatus === 'connected' ? '✅ Connecté' : '❌ Déconnecté'}
+    <div className="video-call-app">
+      {/* Header */}
+      <header className="app-header">
+        <div className="header-content">
+          <h1 className="app-title">📹 VideoConnect Pro</h1>
+          <div className="connection-status">
+            <span className={`status-indicator ${appState.connectionStatus}`}>
+              {appState.connectionStatus === 'connected' ? '✅ En ligne' : '❌ Hors ligne'}
+            </span>
+            {appState.callCode && (
+              <span className="call-code-badge">Code: {appState.callCode}</span>
+            )}
+          </div>
         </div>
       </header>
 
-      <main className="App-main">
-        {error && (
-          <div className={`message ${error.includes('❌') ? 'error' : 'info'}`}>
-            {error}
-          </div>
-        )}
-
-        {/* Modal d'attente */}
-        {showWaitingModal && (
-          <div className="modal-overlay">
-            <div className="modal">
-              <h3>🔔 Demande de connexion</h3>
-              <p>Quelqu'un veut rejoindre votre appel</p>
-              <div className="modal-buttons">
-                <button className="btn-accept" onClick={handleAcceptParticipant}>
-                  ✅ Accepter
-                </button>
-                <button className="btn-reject" onClick={handleRejectParticipant}>
-                  ❌ Refuser
-                </button>
-              </div>
-            </div>
+      {/* Main Content */}
+      <main className="app-main">
+        {appState.error && (
+          <div className="error-alert">
+            <span className="error-icon">⚠️</span>
+            <span>{appState.error}</span>
           </div>
         )}
 
         {/* Écran principal */}
-        {callStatus === 'idle' && (
+        {appState.status === 'idle' && (
           <div className="home-screen">
-            <div className="video-preview">
-              <video
-                ref={localVideoRef}
-                autoPlay
-                muted
-                playsInline
-                className="preview-video"
-              />
-              <p>Votre caméra</p>
+            <div className="welcome-section">
+              <h2>Appels Vidéo Sécurisés</h2>
+              <p>Créez ou rejoignez un appel privé avec un code à 6 caractères</p>
             </div>
-            
-            <div className="actions">
-              <button className="btn-create" onClick={handleCreateCall}>
-                📞 Créer un appel
-              </button>
-              
-              <div className="divider">OU</div>
-              
-              <div className="join-section">
-                <input
-                  type="text"
-                  placeholder="Code à 6 lettres"
-                  value={inputCallCode}
-                  onChange={(e) => setInputCallCode(e.target.value.toUpperCase())}
-                  maxLength={6}
-                  className="code-input"
+
+            <div className="preview-section">
+              <div className="video-preview">
+                <video
+                  ref={localVideoRef}
+                  autoPlay
+                  muted
+                  playsInline
+                  className="preview-video"
                 />
-                <button className="btn-join" onClick={handleJoinCall}>
-                  🔗 Rejoindre
-                </button>
+                <div className="preview-label">Votre caméra</div>
+              </div>
+            </div>
+
+            <div className="action-buttons">
+              <button 
+                className="btn-primary btn-create"
+                onClick={createCall}
+                disabled={appState.status === 'creating'}
+              >
+                {appState.status === 'creating' ? (
+                  <>
+                    <span className="spinner-small"></span>
+                    Création...
+                  </>
+                ) : (
+                  '📞 Créer un nouvel appel'
+                )}
+              </button>
+
+              <div className="divider">
+                <span>OU</span>
+              </div>
+
+              <div className="join-section">
+                <div className="input-group">
+                  <input
+                    type="text"
+                    placeholder="Entrez le code (ex: ABC123)"
+                    value={appState.inputCode}
+                    onChange={(e) => updateState({ inputCode: e.target.value.toUpperCase() })}
+                    maxLength={6}
+                    className="code-input"
+                  />
+                  <button 
+                    className="btn-secondary btn-join"
+                    onClick={joinCall}
+                    disabled={appState.status === 'joining' || !appState.inputCode}
+                  >
+                    {appState.status === 'joining' ? (
+                      <>
+                        <span className="spinner-small"></span>
+                        Connexion...
+                      </>
+                    ) : (
+                      '🔗 Rejoindre l\'appel'
+                    )}
+                  </button>
+                </div>
+                <p className="input-hint">6 lettres/chiffres, majuscules uniquement</p>
               </div>
             </div>
           </div>
         )}
 
-        {/* Création/rejoindre en cours */}
-        {callStatus === 'creating' && (
-          <div className="loading">
-            <div className="spinner"></div>
-            <p>Création de l'appel...</p>
-          </div>
-        )}
-
-        {callStatus === 'joining' && (
-          <div className="loading">
-            <div className="spinner"></div>
-            <p>Connexion à l'appel...</p>
-          </div>
-        )}
-
         {/* En attente de participants */}
-        {callStatus === 'waiting' && (
+        {appState.status === 'waiting' && (
           <div className="waiting-screen">
-            <h2>⏳ En attente d'un participant...</h2>
-            
-            <div className="call-code-section">
-              <p>Code d'appel :</p>
-              <h1 className="call-code">{callCode}</h1>
-              <button className="btn-copy" onClick={copyCallCode}>
-                📋 Copier le code
+            <div className="waiting-content">
+              <div className="waiting-header">
+                <h2>⏳ En attente d'un participant...</h2>
+                <p>Partagez le code ci-dessous avec la personne que vous souhaitez appeler</p>
+              </div>
+
+              <div className="call-code-display">
+                <div className="code-container">
+                  <span className="code-label">Code d'appel</span>
+                  <div className="code-value">{appState.callCode}</div>
+                </div>
+                <button 
+                  className="btn-copy-code"
+                  onClick={copyCallCode}
+                >
+                  📋 Copier le code
+                </button>
+              </div>
+
+              <div className="local-video-container">
+                <h3>Votre caméra en direct</h3>
+                <video
+                  ref={localVideoRef}
+                  autoPlay
+                  muted
+                  playsInline
+                  className="waiting-video"
+                />
+              </div>
+
+              <div className="waiting-stats">
+                <div className="stat-item">
+                  <span className="stat-label">Participants</span>
+                  <span className="stat-value">{appState.participants}/2</span>
+                </div>
+                <div className="stat-item">
+                  <span className="stat-label">Statut</span>
+                  <span className="stat-value waiting">En attente</span>
+                </div>
+              </div>
+
+              <button 
+                className="btn-cancel"
+                onClick={endCall}
+              >
+                ❌ Annuler l'appel
               </button>
             </div>
-            
-            <div className="local-video">
-              <h3>Votre caméra :</h3>
-              <video
-                ref={localVideoRef}
-                autoPlay
-                muted
-                playsInline
-                className="waiting-video"
-              />
-            </div>
-            
-            <button className="btn-end" onClick={handleEndCall}>
-              Annuler l'appel
-            </button>
           </div>
         )}
 
-        {/* En appel */}
-        {callStatus === 'in-call' && (
+        {/* En communication */}
+        {appState.status === 'in-call' && (
           <div className="call-screen">
-            <div className="call-info-bar">
-              <span>Code: <strong>{callCode}</strong></span>
-              <span>{isCreator ? '👑 Créateur' : '👤 Participant'}</span>
-              <span className="webrtc-status">
-                {peerConnection.current?.iceConnectionState === 'connected' 
-                  ? '✅ Connecté' 
-                  : '🔄 Connexion...'}
-              </span>
+            <div className="call-header">
+              <div className="call-info">
+                <span className="info-item">
+                  <span className="info-label">Code:</span>
+                  <span className="info-value">{appState.callCode}</span>
+                </span>
+                <span className="info-item">
+                  <span className="info-label">Participants:</span>
+                  <span className="info-value">{appState.participants}/2</span>
+                </span>
+                <span className="info-item">
+                  <span className="info-label">Rôle:</span>
+                  <span className="info-value">{appState.isCreator ? 'Créateur' : 'Participant'}</span>
+                </span>
+              </div>
+              <div className="call-timer">
+                {/* Timer pourrait être ajouté ici */}
+              </div>
             </div>
-            
-            <div className="video-container">
-              <div className="video-box local-video">
-                <h3>Vous</h3>
+
+            <div className="video-grid">
+              {/* Vidéo locale */}
+              <div className="video-container local-video">
+                <div className="video-header">
+                  <h3>Vous {appState.isCreator && '(Créateur)'}</h3>
+                  <div className="video-controls-mini">
+                    <button 
+                      className="control-btn"
+                      onClick={toggleCamera}
+                      title="Activer/Désactiver caméra"
+                    >
+                      📹
+                    </button>
+                    <button 
+                      className="control-btn"
+                      onClick={toggleMicrophone}
+                      title="Activer/Désactiver micro"
+                    >
+                      🎤
+                    </button>
+                  </div>
+                </div>
                 <video
                   ref={localVideoRef}
                   autoPlay
@@ -618,9 +673,17 @@ function App() {
                   className="video-feed"
                 />
               </div>
-              
-              <div className="video-box remote-video">
-                <h3>Participant</h3>
+
+              {/* Vidéo distante */}
+              <div className="video-container remote-video">
+                <div className="video-header">
+                  <h3>Participant distant</h3>
+                  <span className="connection-status-indicator">
+                    {peerConnectionRef.current?.iceConnectionState === 'connected' 
+                      ? '✅ Connecté' 
+                      : '🔄 Connexion en cours...'}
+                  </span>
+                </div>
                 <video
                   ref={remoteVideoRef}
                   autoPlay
@@ -628,32 +691,60 @@ function App() {
                   className="video-feed"
                 />
                 {!remoteVideoRef.current?.srcObject && (
-                  <div className="waiting-message">
-                    <div className="spinner small"></div>
-                    <p>Connexion en cours...</p>
+                  <div className="video-placeholder">
+                    <div className="placeholder-content">
+                      <div className="loading-spinner"></div>
+                      <p>En attente de la connexion vidéo...</p>
+                    </div>
                   </div>
                 )}
               </div>
             </div>
-            
+
             <div className="call-controls">
-              <button className="btn-end-call" onClick={handleEndCall}>
-                🚪 Quitter l'appel
-              </button>
+              <div className="controls-center">
+                <button 
+                  className="control-btn-large"
+                  onClick={toggleCamera}
+                  title="Caméra"
+                >
+                  📹
+                </button>
+                <button 
+                  className="control-btn-large"
+                  onClick={toggleMicrophone}
+                  title="Microphone"
+                >
+                  🎤
+                </button>
+                <button 
+                  className="control-btn-large end-call"
+                  onClick={endCall}
+                  title="Quitter l'appel"
+                >
+                  🚪
+                </button>
+              </div>
             </div>
           </div>
         )}
       </main>
 
-      <footer className="App-footer">
-        <p>Application d'appel vidéo WebRTC • Déployé sur Render + Vercel</p>
-        <p className="debug-info">
-          Socket ID: {socket?.id?.substring(0, 8)}... | 
-          ICE State: {peerConnection.current?.iceConnectionState || 'N/A'}
-        </p>
+      {/* Footer */}
+      <footer className="app-footer">
+        <div className="footer-content">
+          <p className="footer-text">
+            VideoConnect Pro • Communication sécurisée P2P • 
+            <span className="tech-info"> WebRTC • Socket.io • React</span>
+          </p>
+          <p className="footer-status">
+            Socket: {socketRef.current?.id?.substring(0, 8) || '...'} • 
+            ICE: {peerConnectionRef.current?.iceConnectionState || 'non connecté'}
+          </p>
+        </div>
       </footer>
     </div>
   );
 }
 
-export default App;
+export default VideoCallApp;
